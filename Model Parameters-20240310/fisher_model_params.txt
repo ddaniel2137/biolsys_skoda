@@ -1,0 +1,22 @@
+{
+    # population
+    "init_population": 200,  	  # N
+    "max_population": 1000,	  # mozna ignorowac jesli nie jest uzywany
+    "num_genes": 2,  		  # wymiar wektora cech organizmu
+    "mutation_probability": 0.75, # szansa wystapienia mutacji 
+    "mutation_effect": 0.01,      # odchylenie standardowe rozkladu normalnego do losowania mutacji
+    "fitness_coefficient": 0.5,   # odchylenie standardowe w Gaussowskiej funkcji fitnes
+    "max_num_children": 7,	  # w kroku repordukcji, jak wiele potomkow moze miec organizm - mozna zignorowac jesli nie jest uzywany
+
+    # environment
+    "scenario": "global warning", # oblugujemy: ("global warming", "meteor", "mixed_gw_m") - mixed_gw_m jednoczesna stala zmiana + duze skoki 
+    "global_warming_scale": 0.007,# stala zmiana na pojedynczej cesze optimum
+    "global_warming_var": 0.001,  # jesli sila global warming randomizowana wariancja rozkladu normalnego o sredniej global_warming_scale
+    "meteor_impact_strategy": 0,	  # 0 - brak uderzen meteorytu, 1 - meteor upada co meteor_impact_every, 2 - meteor upada w momentach meteor_impact_at
+    "meteor_impact_every": 20,    # co ile tur następuje diametralna zmiana optimum. 
+				  # Efekt zmiany moze byc rowny: meteor_impact_every * global_warming_scale. 
+    "meteor_impact_at":[20,40],	  # Z gory wybrane momenty uderzen meteorytu  
+
+    # simulation
+    "num_steps": 10 		  # ile iteracji trwa cala symulacja
+}
