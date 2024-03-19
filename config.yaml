@@ -1,7 +1,7 @@
 simulation:
   init_size: 100
   max_size: 1000
-  n_generations: 50
+  n_generations: 10
   n_traits: 3
   trait_min: -1
   trait_max: 1
@@ -11,22 +11,21 @@ simulation:
     - 0
     - 0
     - 0
-  sel_std: 0.5
+  sel_std: 1.2
   warm_rate: 0.001
-  competition_rate: 0.7
   seed: 2137
 
 grid_search:
-  enabled: false
+  enabled: true
   mut_probs: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
   mut_stds: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-  n_simulations: 10
+  n_simulations: 8
 
 plotting:
-  enabled: true
+  enabled: false
 
 animation:
   enabled: false
   p_mut: 0.81
   mut_std: 0.81
-  n_generations: 5000
+  n_generations: 100
