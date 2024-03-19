@@ -2,29 +2,14 @@ import numpy as np
 from numpy.random import Generator, PCG64
 from deap import base
 import matplotlib.pyplot as plt
+import matplotlib
 import pandas as pd
 import seaborn as sns
 import concurrent.futures
 from itertools import product
-
-_CONFIG = {
-    'init_size': 100,
-    'max_size': 1000,
-    'n_generations': 50,
-    'n_traits': 3,
-    'trait_min': -1,
-    'trait_max': 1,
-    'p_mut': 0.1,
-    'mut_std': 0.1,
-    'init_opt_gen': np.zeros(3),
-    'sel_std': 0.95,
-    'warm_rate': 0.01,
-    'competition_rate': 0.1,
-    'seed': 2137
-}
+from sklearn.decomposition import PCA
 
 rng = Generator(PCG64(_CONFIG['seed']))
-
 
 def fitness(population, optimal_traits=_CONFIG['init_opt_gen'], sel_std=_CONFIG['sel_std']):
     distances = np.linalg.norm(population - optimal_traits, axis=1)
@@ -55,7 +40,7 @@ def reproduce(parents):
 
 def select_parents(population, fitnesses, comp_rate=_CONFIG['competition_rate']):
     parents = [element for element, prob in zip(population, fitnesses) if
-               rng.uniform(0, 1) < (1 - _CONFIG['competition_rate']) * prob]
+               rng.uniform(0, 1) < prob]
     return parents
 
 
@@ -84,10 +69,10 @@ def interact(population_predator, fitnesses_predator, population_prey, fitnesses
     #print(f"Predator indices: {indcs_predator}, Prey indices: {indcs_prey}")
     indcs_dead_prey = []
     for i, j in zip(indcs_predator, indcs_prey):
-        if fitnesses_predator[i] > fitnesses_prey[j]:
+        if fitnesses_predator[i] > 2*fitnesses_prey[j]:
             # Predator eats prey
             indcs_dead_prey.append(j)
-            fitnesses_predator[i] += 0.5 * fitnesses_prey[j]
+            fitnesses_predator[i] += 0.1 * fitnesses_prey[j]
 
     population_prey = [population_prey[i] for i in range(len(population_prey)) if i not in indcs_dead_prey]
     indcs_dead_prey = np.array(indcs_dead_prey, dtype=int)
@@ -185,41 +170,187 @@ def simulate_evolution(config):
     pop_history_predator.dropna(how='all', axis=0, inplace=True)
     return pop_history_prey, pop_history_predator
 
+
 def grid_search_parallel(config, mut_probs, mut_stds, n_simulations=10):
     results_predator = []
     results_prey = []
+
+    # Create a base seed sequence
+    base_seed_seq = np.random.SeedSequence()
+
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        futures = []
-
+        futures = {}
         for mut_prob, mut_std in product(mut_probs, mut_stds):
-            new_config = config.copy()
-            new_config['p_mut'] = mut_prob
-            new_config['mut_std'] = mut_std
-            future = executor.submit(simulate_evolution, new_config)
-            futures.append((mut_prob, mut_std, future))
-            #print(future.result())
-    
-        for mut_prob, mut_std, future in futures:
-            pop_history_predator, pop_history_prey = future.result()
-            avg_survival_rate_predator = pop_history_predator.shape[0] / n_simulations
-            avg_survival_rate_prey = pop_history_prey.shape[0] / n_simulations
-            results_predator.append((mut_prob, mut_std, avg_survival_rate_predator))
-            results_prey.append((mut_prob, mut_std, avg_survival_rate_prey))
+            # Generate unique seeds for each simulation
+            seed_seq = base_seed_seq.spawn(n_simulations)
 
-    return results_predator, results_prey
+            for seed in seed_seq:
+                new_config = config.copy()
+                new_config['p_mut'] = mut_prob
+                new_config['mut_std'] = mut_std
+                new_config['seed'] = seed
+                future = executor.submit(simulate_evolution, new_config)
+                futures[future] = (mut_prob, mut_std)
+
+        for future in concurrent.futures.as_completed(futures):
+            mut_prob, mut_std = futures[future]
+            predator_result, prey_result = future.result()
+            results_predator.append((mut_prob, mut_std, predator_result.shape[0]))
+            results_prey.append((mut_prob, mut_std, prey_result.shape[0]))
+
+    # Calculate average survival rates
+    avg_results_predator = {}
+    avg_results_prey = {}
+    for mut_prob, mut_std, survival_rate in results_predator:
+        key = (mut_prob, mut_std)
+        if key not in avg_results_predator:
+            avg_results_predator[key] = []
+        avg_results_predator[key].append(survival_rate)
+
+    for mut_prob, mut_std, survival_rate in results_prey:
+        key = (mut_prob, mut_std)
+        if key not in avg_results_prey:
+            avg_results_prey[key] = []
+        avg_results_prey[key].append(survival_rate)
+
+    final_results_predator = [(mut_prob, mut_std, np.mean(survival_rates))
+                              for (mut_prob, mut_std), survival_rates in avg_results_predator.items()]
+    final_results_prey = [(mut_prob, mut_std, np.mean(survival_rates))
+                          for (mut_prob, mut_std), survival_rates in avg_results_prey.items()]
+
+    return final_results_predator, final_results_prey
+
 
 if __name__ == "__main__":
-    mut_probs = np.linspace(0.1, 0.9, 10)
-    mut_stds = np.linspace(0.1, 0.9, 10)
-    results_predator, results_prey = grid_search_parallel(_CONFIG, mut_probs, mut_stds)
-    results_predator_df = pd.DataFrame(results_predator, columns=["p_mut", "mut_std", "avg_survival_rate"])
-    results_prey_df = pd.DataFrame(results_prey, columns=["p_mut", "mut_std", "avg_survival_rate"])
-    results_predator_df['p_mut'] = results_predator_df['p_mut'].round(2)
-    results_predator_df['mut_std'] = results_predator_df['mut_std'].round(2)
-    results_prey_df['p_mut'] = results_prey_df['p_mut'].round(2)
-    results_prey_df['mut_std'] = results_prey_df['mut_std'].round(2)
 
-    sns.heatmap(results_predator_df.pivot(index="p_mut", columns="mut_std", values="avg_survival_rate"), annot=True, fmt='.2f', cmap='Blues')
-    plt.show()
-    sns.heatmap(results_prey_df.pivot(index="p_mut", columns="mut_std", values="avg_survival_rate"), annot=True, fmt='.2f', cmap='Blues')
-    plt.show()
+    _GRID, _PLOT, _ANIME = False, True, False
+
+    if _GRID:
+        mut_probs = np.linspace(0.1, 0.9, 10)
+        mut_stds = np.linspace(0.1, 0.9, 10)
+        results_predator, results_prey = grid_search_parallel(_CONFIG, mut_probs, mut_stds)
+        results_predator_df = pd.DataFrame(results_predator, columns=["p_mut", "mut_std", "avg_survival_rate"])
+        results_prey_df = pd.DataFrame(results_prey, columns=["p_mut", "mut_std", "avg_survival_rate"])
+        results_predator_df['p_mut'] = results_predator_df['p_mut'].round(2)
+        results_predator_df['mut_std'] = results_predator_df['mut_std'].round(2)
+        results_prey_df['p_mut'] = results_prey_df['p_mut'].round(2)
+        results_prey_df['mut_std'] = results_prey_df['mut_std'].round(2)
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+        sns.heatmap(results_predator_df.pivot(index="p_mut", columns="mut_std", values="avg_survival_rate"),
+                    annot=True, fmt='.2f', cmap='Blues', ax=ax1)
+        ax1.set_title('Predator population')
+
+        sns.heatmap(results_prey_df.pivot(index="p_mut", columns="mut_std", values="avg_survival_rate"),
+                    annot=True, fmt='.2f', cmap='Blues', ax=ax2)
+        ax2.set_title('Prey population')
+
+        plt.tight_layout()
+        plt.show()
+        
+    if _PLOT:
+        new_config = _CONFIG.copy()
+        new_config['p_mut'] = 0.1
+        new_config['mut_std'] = 0.46
+        new_config['n_generations'] = 10
+        pop_history_prey = pd.DataFrame()
+
+        iter_stop = 0
+        while pop_history_prey.shape[0] < new_config['n_generations'] and iter_stop < 10:
+            pop_history_prey, pop_history_predator = simulate_evolution(new_config)
+            iter_stop += 1
+
+        if iter_stop == 10 and pop_history_prey.shape[0] < new_config['n_generations']:
+            print("Simulation did not converge.")
+        else:
+
+            pca = PCA(n_components=2)
+            pop_history_prey['pca'] = pop_history_prey['population'].apply(lambda x: pca.fit_transform(np.array(x)))
+
+            fig1, ax1 = plt.subplots(3, 2, figsize=(20, 30))
+            for (i, j), k in zip(product(range(3), range(2)), range(0, new_config['n_generations'], 5)):
+                X, Y = pop_history_prey['pca'][k].T
+                ax1[i, j].scatter(X, Y, c=pop_history_prey['fitnesses'][k], cmap='seismic', alpha=0.5, label='Population')
+                ax1[i, j].plot(pop_history_prey['optimal_traits'][k][0], pop_history_prey['optimal_traits'][k][1], 'x',
+                              color='black', label='Optimal traits')
+                ax1[i, j].set_title(f"Prey generation {k}")
+                ax1[i, j].set_xlim(-1, 1)
+                ax1[i, j].set_ylim(-1, 1)
+                ax1[i, j].legend()
+            plt.show()
+
+            pop_history_predator['pca'] = pop_history_predator['population'].apply(lambda x: pca.fit_transform(np.array(x)))
+            fig2, ax2 = plt.subplots(3, 2, figsize=(20, 30))
+            for (i, j), k in zip(product(range(3), range(2)), range(0, new_config['n_generations'], 5)):
+                X, Y = pop_history_predator['pca'][k].T
+                ax2[i, j].scatter(X, Y, c=pop_history_predator['fitnesses'][k], cmap='seismic', alpha=0.5,
+                                 label='Population')
+                ax2[i, j].plot(pop_history_predator['optimal_traits'][k][0], pop_history_predator['optimal_traits'][k][1], 'x',
+                              color='black', label='Optimal traits')
+                ax2[i, j].set_title(f"Predator generation {k}")
+                ax2[i, j].set_xlim(-1, 1)
+                ax2[i, j].set_ylim(-1, 1)
+                ax2[i, j].legend()
+            plt.show()
+
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+    from sklearn.decomposition import PCA
+
+    if _ANIME:
+        new_config = _CONFIG.copy()
+        new_config['p_mut'] = 0.81
+        new_config['mut_std'] = 0.81
+        new_config['n_generations'] = 5000
+        pop_history_prey = pd.DataFrame()
+
+        iter_stop = 0
+        while pop_history_prey.shape[0] < new_config['n_generations'] and iter_stop < 100:
+            pop_history_prey, pop_history_predator = simulate_evolution(new_config)
+            iter_stop += 1
+
+        if iter_stop == 100 and pop_history_prey.shape[0] < new_config['n_generations']:
+            print("Simulation did not converge.")
+        else:
+            pca = PCA(n_components=2)
+            pop_history_prey['pca'] = pop_history_prey['population'].apply(lambda x: pca.fit_transform(np.array(x)))
+            pop_history_predator['pca'] = pop_history_predator['population'].apply(lambda x: pca.fit_transform(np.array(x)))
+
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+
+            def animate(i):
+                ax1.clear()
+                ax2.clear()
+
+                X, Y = pop_history_prey['pca'][i].T
+                ax1.scatter(X, Y, c=pop_history_prey['fitnesses'][i], cmap='seismic', alpha=0.5, label='Population')
+                ax1.plot(pop_history_prey['optimal_traits'][i][0], pop_history_prey['optimal_traits'][i][1], 'x',
+                         color='black', label='Optimal traits')
+                ax1.set_title(f"Prey generation {i}")
+                ax1.set_xlim(-1, 1)
+                ax1.set_ylim(-1, 1)
+                ax1.legend()
+
+                X, Y = pop_history_predator['pca'][i].T
+                ax2.scatter(X, Y, c=pop_history_predator['fitnesses'][i], cmap='seismic', alpha=0.5, label='Population')
+                ax2.plot(pop_history_predator['optimal_traits'][i][0], pop_history_predator['optimal_traits'][i][1], 'x',
+                         color='black', label='Optimal traits')
+                ax2.set_title(f"Predator generation {i}")
+                ax2.set_xlim(-1, 1)
+                ax2.set_ylim(-1, 1)
+                ax2.legend()
+
+
+        ani = FuncAnimation(fig, animate, frames=new_config['n_generations'], interval=200)
+        plt.tight_layout()
+        plt.show()
+
+        
+
+
+
+
+
